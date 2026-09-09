@@ -1,0 +1,246 @@
+esphome:
+  name: message
+  friendly_name: Message
+  on_boot:
+    priority: 800
+    then:
+      - output.turn_on: epaper_power
+      # ES8311 needs power before I2C init
+      - output.turn_on: audio_power
+      - delay: 200ms
+      - light.turn_off: monitor_led
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: !secret ap_ssid
+    password: !secret ap_password
+
+output:
+  # ePaper power (GPIO6 must be HIGH)
+  - platform: gpio
+    pin: GPIO6
+    id: epaper_power
+  # ES8311 codec supply
+  - platform: gpio
+    pin: GPIO42
+    id: audio_power
+  # NS4150B amplifier — on only during playback
+  - platform: gpio
+    pin: GPIO46
+    id: amp_enable
+
+spi:
+  id: epaper_spi
+  clk_pin: GPIO12
+  mosi_pin: GPIO13
+
+# Shared with RTC (0x51), SHTC3 (0x70), ES8311 (0x18)
+i2c:
+  sda: GPIO47
+  scl: GPIO48
+  id: bus_a
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    i2c_id: bus_a
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+i2s_audio:
+  - id: i2s_output
+    i2s_lrclk_pin: GPIO38
+    i2s_bclk_pin: GPIO15
+    i2s_mclk_pin: GPIO14
+
+speaker:
+  - platform: i2s_audio
+    id: onboard_speaker
+    i2s_audio_id: i2s_output
+    i2s_dout_pin: GPIO45
+    dac_type: external
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    channel: mono
+    audio_dac: es8311_dac
+
+rtttl:
+  id: notify_tone
+  speaker: onboard_speaker
+  gain: 0.6
+  on_finished_playback:
+    then:
+      - output.turn_off: amp_enable
+
+script:
+  - id: play_notification_sound
+    mode: restart
+    then:
+      - output.turn_on: amp_enable
+      - delay: 120ms
+      - rtttl.stop:
+      - rtttl.play: "notify:d=16,o=6,b=140:c,e,g"
+
+  # LED colour from HA helper. "default" = red.
+  - id: apply_led
+    mode: restart
+    then:
+      - lambda: |-
+          auto msg = id(current_message).state;
+          auto col = id(current_color).state;
+          if (msg.empty() || msg == "No message" || col == "off") {
+            auto call = id(monitor_led).turn_off();
+            call.perform();
+            return;
+          }
+          float r = 1.0f, g = 0.0f, b = 0.0f;
+          if (col == "green") {
+            r = 0.0f; g = 1.0f; b = 0.0f;
+          } else if (col == "blue") {
+            r = 0.0f; g = 0.0f; b = 1.0f;
+          } else if (col == "yellow") {
+            r = 1.0f; g = 0.72f; b = 0.0f;
+          } else if (col == "red" || col == "default" || col.empty()) {
+            r = 1.0f; g = 0.0f; b = 0.0f;
+          } else {
+            r = 1.0f; g = 0.0f; b = 0.0f;
+          }
+          auto call = id(monitor_led).turn_on();
+          call.set_rgb(r, g, b);
+          call.set_brightness(0.6f);
+          call.set_effect("Blink");
+          call.perform();
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_large
+    size: 20
+    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz'
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 14
+    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz'
+
+text_sensor:
+  - platform: homeassistant
+    id: current_message
+    entity_id: input_select.epaper_message
+    on_value:
+      then:
+        - component.update: epaper_display
+        # Wait for HA to set colour/sound helpers
+        - delay: 300ms
+        - script.execute: apply_led
+        - if:
+            condition:
+              lambda: |-
+                if (x.empty() || x == "No message") return false;
+                auto s = id(current_sound).state;
+                if (s == "off") return false;
+                return true;
+            then:
+              - script.execute: play_notification_sound
+  - platform: homeassistant
+    id: current_color
+    entity_id: input_select.epaper_led_colour
+    on_value:
+      then:
+        - script.execute: apply_led
+  - platform: homeassistant
+    id: current_sound
+    entity_id: input_select.epaper_sound
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO18
+      mode: INPUT_PULLUP
+      inverted: true
+    name: "Acknowledge"
+    id: btn_acknowledge
+    on_press:
+      then:
+        - light.turn_off: monitor_led
+        - homeassistant.action:
+            action: input_select.select_option
+            data:
+              entity_id: input_select.epaper_message
+              option: "No message"
+  - platform: status
+    name: "Status"
+
+button:
+  - platform: template
+    name: "Test sound"
+    on_press:
+      then:
+        - script.execute: play_notification_sound
+
+# WS2812B on GPIO1. Single LED: num_leds: 1
+light:
+  - platform: esp32_rmt_led_strip
+    rgb_order: GRB
+    pin: GPIO1
+    num_leds: 37
+    chipset: ws2812
+    name: "Monitor notification light"
+    id: monitor_led
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    effects:
+      - pulse:
+          name: Blink
+          transition_length: 500ms
+          update_interval: 500ms
+          min_brightness: 20%
+          max_brightness: 80%
+
+display:
+  - platform: waveshare_epaper
+    id: epaper_display
+    spi_id: epaper_spi
+    cs_pin: GPIO11
+    dc_pin: GPIO10
+    reset_pin: GPIO9
+    busy_pin:
+      number: GPIO8
+      inverted: false
+    model: 1.54inv2
+    rotation: 0
+    update_interval: 120s
+    full_update_every: 30
+    lambda: |-
+      std::string msg = id(current_message).state;
+      if (msg == "No message" || msg.length() == 0) {
+        it.print(100, 40, id(font_large), TextAlign::TOP_CENTER, "No");
+        it.print(100, 60, id(font_large), TextAlign::TOP_CENTER, "message");
+      } else {
+        it.print(100, 20, id(font_small), TextAlign::TOP_CENTER, "NEW MESSAGE");
+        it.line(20, 40, 180, 40);
+        it.print(100, 70, id(font_large), TextAlign::TOP_CENTER, msg.c_str());
+        it.line(20, 160, 180, 160);
+        it.print(100, 170, id(font_small), TextAlign::TOP_CENTER, "[PWR] = seen");
+      }

@@ -1,0 +1,37 @@
+# Add to configuration.yaml:
+#   input_select: !include_dir_merge_named helpers/
+#
+# Or copy the blocks below into your existing input_select section.
+
+epaper_message:
+  name: ePaper message
+  icon: mdi:message-text
+  options:
+    - No message
+    - Dinner is ready
+    - Call me
+    - Be right back
+    - Coming later
+    - Please get in touch
+  initial: No message
+
+epaper_led_colour:
+  name: ePaper LED colour
+  icon: mdi:palette
+  options:
+    - default
+    - red
+    - green
+    - blue
+    - yellow
+    - off
+  initial: default
+
+epaper_sound:
+  name: ePaper sound
+  icon: mdi:volume-high
+  options:
+    - default
+    - on
+    - off
+  initial: default

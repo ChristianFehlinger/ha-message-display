@@ -1,0 +1,50 @@
+# Import as a new dashboard in HA:
+# Settings -> Dashboards -> Add dashboard -> Import from YAML
+#
+# Requires: Mushroom Cards (HACS), optional card-mod for status background colour.
+
+views:
+  - type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: binary_sensor.message_status
+                primary: Messages
+                secondary: >-
+                  {% if is_state('binary_sensor.message_status', 'on') %}
+                    Active
+                  {% else %}
+                    Unavailable
+                  {% endif %}
+                icon: mdi:message-text-outline
+                icon_color: >-
+                  {% if is_state('binary_sensor.message_status', 'on') %}
+                    green
+                  {% else %}
+                    red
+                  {% endif %}
+                tap_action:
+                  action: more-info
+                card_mod:
+                  style: |
+                    ha-card {
+                      {% if is_state('binary_sensor.message_status', 'on') %}
+                        background: rgba(76, 175, 80, 0.2);
+                      {% else %}
+                        background: rgba(255, 82, 82, 0.2);
+                      {% endif %}
+                    }
+              - type: conditional
+                conditions:
+                  - condition: state
+                    entity: binary_sensor.message_status
+                    state: on
+                card:
+                  type: entities
+                  entities:
+                    - entity: input_select.epaper_message
+                      name: Choose message
+                      icon: mdi:message-arrow-right

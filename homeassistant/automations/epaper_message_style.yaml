@@ -1,0 +1,48 @@
+- id: epaper_message_style
+  alias: ePaper message style
+  description: >
+    Central mapping table for LED colour and sound per message.
+    Edit only the "style" block under variables.
+    colour: default|red|green|blue|yellow|off  —  sound: default|on|off
+    Unlisted messages get default/default (red blink, sound on).
+  mode: queued
+  max: 10
+  triggers:
+    - platform: state
+      entity_id: input_select.epaper_message
+  actions:
+    - variables:
+        # ---- EDIT MAPPING HERE ----
+        style:
+          No message:
+            colour: default
+            sound: off
+          Dinner is ready:
+            colour: yellow
+            sound: on
+          Call me:
+            colour: red
+            sound: on
+          Be right back:
+            colour: green
+            sound: on
+          Coming later:
+            colour: blue
+            sound: on
+          Please get in touch:
+            colour: red
+            sound: on
+        # ---------------------------
+        message: "{{ states('input_select.epaper_message') }}"
+        colour: "{{ style.get(message, {}).get('colour', 'default') }}"
+        sound: "{{ style.get(message, {}).get('sound', 'default') }}"
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.epaper_led_colour
+      data:
+        option: "{{ colour }}"
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.epaper_sound
+      data:
+        option: "{{ sound }}"

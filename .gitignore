@@ -1,0 +1,13 @@
+# ESPHome secrets (WLAN, OTA, API key)
+esphome/secrets.yaml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local overrides
+*.local.yaml
+
+local/
