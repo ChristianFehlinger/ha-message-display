@@ -1,0 +1,78 @@
+name: Build firmware
+
+on:
+  push:
+    paths:
+      - "esphome/**"
+      - ".github/workflows/build-firmware.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ESPHOME_VERSION: "2026.8.2"
+
+jobs:
+  build:
+    name: esphome compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # message.yaml reads WiFi/OTA/API values from secrets.yaml, which is
+      # gitignored. Compiling only needs the keys to exist, so throwaway values
+      # are enough — this binary is never flashed onto a device.
+      - name: Write throwaway secrets.yaml
+        run: |
+          cat > esphome/secrets.yaml <<EOF
+          wifi_ssid: "ci-build"
+          wifi_password: "ci-build-password"
+          ap_ssid: "ci-build-fallback"
+          ap_password: "ci-build-password"
+          api_encryption_key: "$(openssl rand -base64 32)"
+          ota_password: "ci-build-password"
+          EOF
+
+      # The ESP-IDF toolchain is ~1 GB and would otherwise be downloaded on
+      # every run. build-action mounts $HOME into the container, so whatever
+      # PlatformIO writes here survives as a cache.
+      - name: Cache PlatformIO toolchain
+        uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: platformio-${{ env.ESPHOME_VERSION }}-${{ hashFiles('esphome/message.yaml') }}
+          restore-keys: platformio-${{ env.ESPHOME_VERSION }}-
+
+      # build-action forwards CCACHE_DIR into the container, but a `~` in an
+      # `env:` block is passed through literally — it has to be expanded here.
+      - name: Point ccache at a cacheable directory
+        run: |
+          mkdir -p "$HOME/.cache/ccache"
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+
+      - name: Cache compiler output
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ env.ESPHOME_VERSION }}-${{ github.sha }}
+          restore-keys: ccache-${{ env.ESPHOME_VERSION }}-
+
+      - name: Build
+        id: build
+        uses: esphome/build-action@v8.1.0
+        with:
+          yaml-file: esphome/message.yaml
+          version: ${{ env.ESPHOME_VERSION }}
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-${{ steps.build.outputs.name }}
+          path: ${{ steps.build.outputs.name }}
+          if-no-files-found: error
+          retention-days: 14
